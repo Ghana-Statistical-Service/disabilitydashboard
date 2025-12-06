@@ -1,7 +1,9 @@
 // app/components/graphcomponent/EducationStatusCard.js
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import regionsGeo from "../../data/Regions.gh.json";
+import districtsGeo from "../../data/District.gh.json";
 
 const FALLBACK_LEVELS = [
   { label: "No schooling", value: 0 },
@@ -10,14 +12,73 @@ const FALLBACK_LEVELS = [
   { label: "SHS+", value: 0 },
 ];
 
-export default function EducationStatusCard() {
-  const [view, setView] = useState("all"); // "all" | "sex" | "region"
+export default function EducationStatusCard({ filters }) {
   const [levels, setLevels] = useState(FALLBACK_LEVELS);
+  const [selectedRegion, setSelectedRegion] = useState("Ghana");
+  const [selectedDistrict, setSelectedDistrict] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const indicator = filters?.indicator || "disability";
+  const sex = filters?.sex || "all";
+  const ageGroupFilter = filters?.ageGroup || "all";
+  const geographicLevel = filters?.geographicLevel || "national";
+
+  const regionOptions = useMemo(
+    () =>
+      ["Ghana", ...new Set(regionsGeo.features.map((f) => f.properties.region))],
+    []
+  );
+
+  const districtOptions = useMemo(() => {
+    if (selectedRegion === "Ghana") return [];
+    return districtsGeo.features
+      .filter(
+        (f) =>
+          f.properties.region === selectedRegion ||
+          f.properties.Region === selectedRegion
+      )
+      .map((f) => f.properties.district || f.properties.label || f.properties.name);
+  }, [selectedRegion]);
+
+  useEffect(() => {
+    if (geographicLevel === "national") {
+      setSelectedRegion("Ghana");
+      setSelectedDistrict("");
+    } else if (geographicLevel === "region") {
+      const firstRegion = regionOptions.find((r) => r !== "Ghana") || "Ghana";
+      setSelectedRegion(firstRegion);
+      setSelectedDistrict("");
+    } else if (geographicLevel === "district") {
+      const firstDistrict = districtsGeo.features[0];
+      const regionName =
+        firstDistrict?.properties?.region ||
+        firstDistrict?.properties?.Region ||
+        "Ghana";
+      const districtName =
+        firstDistrict?.properties?.district ||
+        firstDistrict?.properties?.label ||
+        "";
+      setSelectedRegion(regionName);
+      setSelectedDistrict(districtName);
+    }
+  }, [geographicLevel, regionOptions]);
 
   useEffect(() => {
     const controller = new AbortController();
+    const area = selectedDistrict || selectedRegion || "Ghana";
 
-    fetch(`/api/statsbank/disability/education?group=${view}`, {
+    setLoading(true);
+    setError(null);
+
+    const url = new URL(
+      `/api/statsbank/disability/education?area=${encodeURIComponent(area)}`,
+      window.location.origin
+    );
+    url.searchParams.set("indicator", indicator);
+    url.searchParams.set("sex", sex);
+    url.searchParams.set("ageGroup", ageGroupFilter);
+
+    fetch(url.toString(), {
       signal: controller.signal,
     })
       .then((res) => {
@@ -28,7 +89,7 @@ export default function EducationStatusCard() {
         const rows = Array.isArray(json?.data) ? json.data : [];
         if (!rows.length) return;
 
-        // Expect rows: [{label, value}, ...] where value is a count
+        // Expect rows: [{label, value, percent?}, ...]
         const cleaned = rows.filter(
           (r) =>
             typeof r.label === "string" &&
@@ -41,22 +102,26 @@ export default function EducationStatusCard() {
             ? cleaned.reduce((sum, r) => sum + r.value, 0)
             : 1;
 
-        // Convert to percentages for display & width scaling
         const percentLevels = cleaned.map((r) => ({
           label: r.label,
-          percent: (r.value / total) * 100,
+          percent:
+            typeof r.percent === "number"
+              ? r.percent
+              : (r.value / total) * 100,
         }));
 
         setLevels(percentLevels);
+        setLoading(false);
       })
       .catch((err) => {
         if (err.name === "AbortError") return;
         console.error("Education status fetch error:", err);
-        // keep fallback data
+        setError("Unable to load data");
+        setLoading(false);
       });
 
     return () => controller.abort();
-  }, [view]);
+  }, [selectedRegion, selectedDistrict, indicator, sex, ageGroupFilter]);
 
   // Used to scale bar widths but keep some minimum visual width
   const maxPercent =
@@ -65,45 +130,54 @@ export default function EducationStatusCard() {
   return (
     <div className="rounded-3xl bg-white p-5 shadow-md">
       <div className="mb-4 flex items-center justify-between gap-3">
-        <h3 className="text-base font-semibold text-slate-900">
-          Education Status (5+ years) of Persons with Disability
-        </h3>
+      <h3 className="text-base font-semibold text-slate-900">
+        Education Status (5+ years) of Persons with Disability
+      </h3>
+    </div>
 
-        {/* Toggle: All / Sex / Region */}
-        <div className="inline-flex rounded-full bg-slate-100 p-1 text-xs">
-          <button
-            type="button"
-            onClick={() => setView("all")}
-            className={`rounded-full px-3 py-1 text-[11px] font-semibold ${
-              view === "all"
-                ? "bg-white text-slate-900 shadow-sm"
-                : "text-slate-500"
-            }`}
+    <div className="mb-3 flex flex-wrap gap-3 text-xs">
+      <label className="flex items-center gap-2">
+        <span className="text-slate-600">Region</span>
+          <select
+            value={selectedRegion}
+            onChange={(e) => {
+              setSelectedRegion(e.target.value);
+              setSelectedDistrict("");
+            }}
+            className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800"
           >
-            All
-          </button>
-          <button
-            type="button"
-            onClick={() => setView("sex")}
-            className={`rounded-full px-3 py-1 text-[11px] ${
-              view === "sex" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
-            }`}
+            {regionOptions.map((r) => (
+              <option key={r} value={r}>
+                {r === "Ghana" ? "Ghana (National)" : r}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="flex items-center gap-2">
+          <span className="text-slate-600">District</span>
+          <select
+            value={selectedDistrict}
+            onChange={(e) => setSelectedDistrict(e.target.value)}
+            disabled={selectedRegion === "Ghana"}
+            className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 disabled:cursor-not-allowed disabled:bg-slate-100"
           >
-            Sex
-          </button>
-          <button
-            type="button"
-            onClick={() => setView("region")}
-            className={`rounded-full px-3 py-1 text-[11px] ${
-              view === "region"
-                ? "bg-white text-slate-900 shadow-sm"
-                : "text-slate-500"
-            }`}
-          >
-            Region
-          </button>
-        </div>
+            <option value="">All (region total)</option>
+            {districtOptions.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
+
+      {loading && (
+        <p className="text-xs text-slate-500">Loading…</p>
+      )}
+      {error && (
+        <p className="text-xs text-red-600">{error}</p>
+      )}
 
       <div className="space-y-3 text-xs">
         {levels.map((item) => {

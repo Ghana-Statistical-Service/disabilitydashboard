@@ -1,35 +1,94 @@
 // app/components/graphcomponent/DisabilityPrevalenceCard.js
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import "leaflet/dist/leaflet.css";
 import regionsGeo from "../../data/Regions.gh.json";
+import districtsGeo from "../../data/District.gh.json";
 
-const HIGHEST_FALLBACK = [" "];
-const DEFAULT_REGION = "Greater Accra";
+const HIGHEST_FALLBACK = ["No data"];
+const MAP_LEVELS = {
+  region: {
+    key: "region",
+    label: "Region",
+    defaultName: "Greater Accra",
+    api: "/api/statsbank/disability/region",
+    geo: regionsGeo,
+    getName: (feature) =>
+      feature.properties.region ||
+      feature.properties.Region ||
+      feature.properties.name,
+  },
+  district: {
+    key: "district",
+    label: "District",
+    defaultName: "Accra Metropolitan",
+    api: "/api/statsbank/disability/district",
+    geo: districtsGeo,
+    getName: (feature) =>
+      feature.properties.district ||
+      feature.properties.District ||
+      feature.properties.label ||
+      feature.properties.name,
+  },
+};
 
-export default function DisabilityPrevalenceCard() {
-  // region under mouse on the map
-  const [tooltipRegion, setTooltipRegion] = useState(null);
+export default function DisabilityPrevalenceCard({ filters }) {
+  // region/district under mouse on the map
+  const [hoveredArea, setHoveredArea] = useState(null);
 
-  // stats from backend: { [regionName]: { region, total, withDifficulty, withoutDifficulty, prevalence } }
-  const [regionStats, setRegionStats] = useState(null);
-  const [highestRegions, setHighestRegions] = useState(HIGHEST_FALLBACK);
+  // stats from backend: { [areaName]: { total, withDifficulty, withoutDifficulty, prevalence } }
+  const [areaStats, setAreaStats] = useState(null);
+  const [highestAreas, setHighestAreas] = useState(HIGHEST_FALLBACK);
+  const [mapLevel, setMapLevel] = useState("region");
+  const [defaultArea, setDefaultArea] = useState(
+    MAP_LEVELS.region.defaultName
+  );
+  const [mapReady, setMapReady] = useState(false);
+  const indicator = filters?.indicator || "disability";
+  const sex = filters?.sex || "all";
+  const ageGroup = filters?.ageGroup || "all";
+  const geographicLevel = filters?.geographicLevel || "national";
 
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
   const geoLayerRef = useRef(null);
+  const leafletRef = useRef(null);
+
+  const levelConfig = useMemo(() => MAP_LEVELS[mapLevel], [mapLevel]);
+
+  useEffect(() => {
+    setHoveredArea(null);
+    setAreaStats(null);
+    setHighestAreas(HIGHEST_FALLBACK);
+    setDefaultArea(levelConfig.defaultName);
+  }, [levelConfig]);
+
+  useEffect(() => {
+    setMapLevel(geographicLevel === "district" ? "district" : "region");
+  }, [geographicLevel]);
 
   /**
-   * 1. Fetch region-level disability stats from our API
-   *    /api/disability/regions  ->  { data: [{ region, total, withDifficulty, withoutDifficulty, prevalence }, ...] }
+   * 1. Fetch disability stats for the current map level
+   *    /api/statsbank/disability/{region|district} -> { data: [...] }
    */
   useEffect(() => {
-    fetch("/api/statsbank/disability/region")
+    let cancelled = false;
+
+    const url = new URL(levelConfig.api, window.location.origin);
+    url.searchParams.set("indicator", indicator);
+    url.searchParams.set("sex", sex);
+    url.searchParams.set("ageGroup", ageGroup);
+
+    fetch(url.toString())
       .then((res) => {
-        if (!res.ok) throw new Error("Failed to fetch disability regions");
+        if (!res.ok) {
+          throw new Error("Failed to fetch disability stats");
+        }
         return res.json();
       })
       .then((json) => {
+        if (cancelled) return;
         const rows = Array.isArray(json?.data) ? json.data : [];
 
         const statsMap = {};
@@ -41,7 +100,6 @@ export default function DisabilityPrevalenceCard() {
               ? Number(r.withoutDifficulty)
               : Math.max(total - withDifficulty, 0);
 
-          // use API prevalence if present, else compute it
           const prevalence =
             typeof r.prevalence === "number"
               ? r.prevalence
@@ -49,8 +107,10 @@ export default function DisabilityPrevalenceCard() {
               ? (withDifficulty / total) * 100
               : 0;
 
-          statsMap[r.region] = {
-            region: r.region,
+          const name = r[levelConfig.key];
+          if (!name) return;
+          statsMap[name] = {
+            ...r,
             total,
             withDifficulty,
             withoutDifficulty,
@@ -58,20 +118,29 @@ export default function DisabilityPrevalenceCard() {
           };
         });
 
-        // figure out the highest-prevalence regions (top 4)
         const ordered = Object.values(statsMap)
           .filter((r) => !Number.isNaN(r.prevalence))
           .sort((a, b) => b.prevalence - a.prevalence)
           .slice(0, 4)
-          .map((r) => r.region);
+          .map((r) => r[levelConfig.key]);
 
-        if (ordered.length) setHighestRegions(ordered);
-        setRegionStats(statsMap);
+        if (ordered.length) {
+          setHighestAreas(ordered);
+          setDefaultArea(ordered[0]);
+        } else {
+          setHighestAreas(HIGHEST_FALLBACK);
+          setDefaultArea(levelConfig.defaultName);
+        }
+        setAreaStats(statsMap);
       })
       .catch((err) => {
-        console.error("Error fetching disability regions:", err);
+        console.error("Error fetching disability stats:", err);
       });
-  }, []);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [levelConfig, indicator, sex, ageGroup]);
 
   /**
    * 2. Initialise Leaflet map (once)
@@ -81,6 +150,7 @@ export default function DisabilityPrevalenceCard() {
 
     async function initMap() {
       const L = (await import("leaflet")).default;
+      leafletRef.current = L;
 
       if (!mapContainerRef.current || !isMounted) return;
       if (mapRef.current) return; // already initialised
@@ -98,36 +168,7 @@ export default function DisabilityPrevalenceCard() {
       });
 
       mapRef.current = map;
-
-      const geoLayer = L.geoJSON(regionsGeo, {
-        style: () => ({
-          color: "#f4f3fb",
-          weight: 1,
-          fillColor: "#b9a6ff",
-          fillOpacity: 1,
-        }),
-        onEachFeature: (feature, layer) => {
-          const name =
-            feature.properties.region ||
-            feature.properties.Region ||
-            feature.properties.name;
-
-          layer.on({
-            mouseover() {
-              layer.setStyle({ fillColor: "#6c4eff" });
-              setTooltipRegion(name);
-            },
-            mouseout() {
-              const base = layer.options._baseFillColor || "#b9a6ff";
-              layer.setStyle({ fillColor: base });
-              setTooltipRegion(null);
-            },
-          });
-        },
-      }).addTo(map);
-
-      geoLayerRef.current = geoLayer;
-      map.fitBounds(geoLayer.getBounds(), { padding: [10, 10] });
+      setMapReady(true);
     }
 
     initMap();
@@ -142,12 +183,59 @@ export default function DisabilityPrevalenceCard() {
   }, []);
 
   /**
+   * 2b. Add/replace GeoJSON layer when map level changes
+   */
+  useEffect(() => {
+    const L = leafletRef.current;
+    const map = mapRef.current;
+    if (!L || !map || !mapReady) return;
+
+    if (geoLayerRef.current) {
+      geoLayerRef.current.remove();
+      geoLayerRef.current = null;
+    }
+
+    const baseColor = "#b9a6ff";
+
+    const geoLayer = L.geoJSON(levelConfig.geo, {
+      style: () => ({
+        color: "#f4f3fb",
+        weight: 1,
+        fillColor: baseColor,
+        fillOpacity: 1,
+      }),
+      onEachFeature: (feature, layer) => {
+        const name = levelConfig.getName(feature);
+        if (!name) return;
+
+        layer.on({
+          mouseover() {
+            layer.setStyle({ fillColor: "#6c4eff" });
+            setHoveredArea(name);
+          },
+          mouseout() {
+            const base = layer.options._baseFillColor || baseColor;
+            layer.setStyle({ fillColor: base });
+            setHoveredArea(null);
+          },
+        });
+      },
+    }).addTo(map);
+
+    geoLayerRef.current = geoLayer;
+
+    if (geoLayer.getLayers().length) {
+      map.fitBounds(geoLayer.getBounds(), { padding: [10, 10] });
+    }
+  }, [levelConfig, mapReady]);
+
+  /**
    * 3. Once we have stats, colour the map by prevalence (low→light, high→dark)
    */
   useEffect(() => {
-    if (!regionStats || !geoLayerRef.current) return;
+    if (!areaStats || !geoLayerRef.current) return;
 
-    const values = Object.values(regionStats)
+    const values = Object.values(areaStats)
       .map((r) => r.prevalence)
       .filter((v) => typeof v === "number" && !Number.isNaN(v));
 
@@ -171,24 +259,21 @@ export default function DisabilityPrevalenceCard() {
     const geoLayer = geoLayerRef.current;
     geoLayer.eachLayer((layer) => {
       const feature = layer.feature;
-      const name =
-        feature.properties.region ||
-        feature.properties.Region ||
-        feature.properties.name;
+      const name = levelConfig.getName(feature);
 
-      const stat = regionStats[name];
+      const stat = areaStats[name];
       const color = getColor(stat?.prevalence ?? NaN);
 
       // remember base colour so mouseout can restore it
       layer.options._baseFillColor = color;
       layer.setStyle({ fillColor: color });
     });
-  }, [regionStats]);
+  }, [areaStats, levelConfig]);
 
-  // Which region’s stats should we show on the right?
-  const regionForStats = tooltipRegion || DEFAULT_REGION;
-  const currentStats =
-    (regionStats && regionStats[regionForStats]) || null;
+  // Which area’s stats should we show on the right?
+  const areaForStats =
+    hoveredArea || defaultArea || highestAreas?.[0] || HIGHEST_FALLBACK[0];
+  const currentStats = (areaStats && areaStats[areaForStats]) || null;
 
   // prevalence (2 d.p.)
   const prevalenceText = currentStats
@@ -212,24 +297,27 @@ export default function DisabilityPrevalenceCard() {
     : "–";
 
   const highestList =
-    highestRegions && highestRegions.length
-      ? highestRegions
-      : HIGHEST_FALLBACK;
+    highestAreas && highestAreas.length ? highestAreas : HIGHEST_FALLBACK;
+  const highestItems = highestList.map((name, idx) => ({
+    name,
+    prevalence: areaStats?.[name]?.prevalence,
+    key: `${name}-${idx}`,
+  }));
 
   return (
     <section className="rounded-3xl bg-white p-5 shadow-md">
       {/* Title + toggle */}
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-lg font-semibold text-slate-900">
-          Disability Prevalence by Region
+          Disability Prevalence Map
         </h2>
-        <div className="inline-flex items-center rounded-full bg-slate-100 p-1 text-xs">
-          <button className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-slate-900 shadow-sm">
-            Map
-          </button>
-          <button className="px-3 py-1 text-[11px] text-slate-500">
-            Tab
-          </button>
+        <div className="flex items-center gap-2 text-xs">
+          <span className="rounded-lg border border-slate-200 px-3 py-1 text-slate-700 bg-white">
+            Indicator: {indicator}
+          </span>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-700">
+            {mapLevel === "district" ? "Districts" : "Regions"}
+          </span>
         </div>
       </div>
 
@@ -241,7 +329,7 @@ export default function DisabilityPrevalenceCard() {
             {/* Leaflet map container */}
             <div
               ref={mapContainerRef}
-              className="h-84 w-full max-w-xs overflow-hidden rounded-[2.2rem]"
+              className="h-80 w-full max-w-xs overflow-hidden rounded-[2.2rem]"
             />
           </div>
 
@@ -257,7 +345,7 @@ export default function DisabilityPrevalenceCard() {
         <div className="lg:col-span-1 flex flex-col gap-3">
           <div className="rounded-2xl bg-[#f8f6ff] p-4 shadow-sm">
             <p className="text-xs font-semibold uppercase tracking-wide text-violet-700">
-              {regionForStats}
+              {areaForStats}
             </p>
             <p className="mt-1 text-2xl font-bold text-slate-900">
               {prevalenceText}
@@ -297,9 +385,16 @@ export default function DisabilityPrevalenceCard() {
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
               Highest
             </p>
-            <div className="flex flex-col gap-1">
-              {highestList.map((r) => (
-                <span key={r}>{r}</span>
+            <div className="flex flex-col gap-2">
+              {highestItems.map(({ key, name, prevalence }) => (
+                <div key={key} className="flex items-center justify-between">
+                  <span>{name}</span>
+                  <span className="text-slate-500">
+                    {Number.isFinite(prevalence)
+                      ? `${prevalence.toFixed(1)}%`
+                      : "–"}
+                  </span>
+                </div>
               ))}
             </div>
           </div>

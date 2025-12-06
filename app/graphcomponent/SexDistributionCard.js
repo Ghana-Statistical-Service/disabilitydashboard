@@ -1,14 +1,76 @@
 // app/components/graphcomponent/SexDistributionCard.js
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import regionsGeo from "../../data/Regions.gh.json";
+import districtsGeo from "../../data/District.gh.json";
 
-export default function SexDistributionCard() {
+export default function SexDistributionCard({ filters }) {
   const [malePercent, setMalePercent] = useState(53);
   const [femalePercent, setFemalePercent] = useState(47);
+  const [selectedRegion, setSelectedRegion] = useState("Ghana");
+  const [selectedDistrict, setSelectedDistrict] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const indicator = filters?.indicator || "disability";
+  const sexFilter = filters?.sex || "all";
+  const ageGroupFilter = filters?.ageGroup || "all";
+  const geographicLevel = filters?.geographicLevel || "national";
+
+  const regionOptions = useMemo(
+    () =>
+      ["Ghana", ...new Set(regionsGeo.features.map((f) => f.properties.region))],
+    []
+  );
+
+  const districtOptions = useMemo(() => {
+    if (selectedRegion === "Ghana") return [];
+    return districtsGeo.features
+      .filter(
+        (f) =>
+          f.properties.region === selectedRegion ||
+          f.properties.Region === selectedRegion
+      )
+      .map((f) => f.properties.district || f.properties.label || f.properties.name);
+  }, [selectedRegion]);
 
   useEffect(() => {
-    fetch("/api/statsbank/disability/sex")
+    if (geographicLevel === "national") {
+      setSelectedRegion("Ghana");
+      setSelectedDistrict("");
+    } else if (geographicLevel === "region") {
+      const firstRegion = regionOptions.find((r) => r !== "Ghana") || "Ghana";
+      setSelectedRegion(firstRegion);
+      setSelectedDistrict("");
+    } else if (geographicLevel === "district") {
+      const firstDistrict = districtsGeo.features[0];
+      const regionName =
+        firstDistrict?.properties?.region ||
+        firstDistrict?.properties?.Region ||
+        "Ghana";
+      const districtName =
+        firstDistrict?.properties?.district ||
+        firstDistrict?.properties?.label ||
+        "";
+      setSelectedRegion(regionName);
+      setSelectedDistrict(districtName);
+    }
+  }, [geographicLevel, regionOptions]);
+
+  useEffect(() => {
+    const area = selectedDistrict || selectedRegion || "Ghana";
+    setLoading(true);
+    setError(null);
+
+    const url = new URL(
+      `/api/statsbank/disability/sex?area=${encodeURIComponent(area)}`,
+      window.location.origin
+    );
+    url.searchParams.set("indicator", indicator);
+    url.searchParams.set("sex", sexFilter);
+    url.searchParams.set("ageGroup", ageGroupFilter);
+
+    fetch(url.toString())
       .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch sex distribution");
         return res.json();
@@ -26,12 +88,15 @@ export default function SexDistributionCard() {
             setFemalePercent(100 - malePct);
           }
         }
+        setLoading(false);
       })
       .catch((err) => {
         console.error("Sex distribution fetch error:", err);
+        setError("Unable to load data");
+        setLoading(false);
         // Keep the default 53 / 47 on error
       });
-  }, []);
+  }, [selectedRegion, selectedDistrict, indicator, sexFilter, ageGroupFilter]);
 
   // Use male share for the conic gradient
   const maleDeg = (malePercent / 100) * 360;
@@ -41,6 +106,49 @@ export default function SexDistributionCard() {
       <h3 className="text-base font-semibold text-slate-900">
         Sex Distribution
       </h3>
+      <div className="flex flex-wrap gap-3 text-xs">
+        <label className="flex items-center gap-2">
+          <span className="text-slate-600">Region</span>
+          <select
+            value={selectedRegion}
+            onChange={(e) => {
+              setSelectedRegion(e.target.value);
+              setSelectedDistrict("");
+            }}
+            className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800"
+          >
+            {regionOptions.map((r) => (
+              <option key={r} value={r}>
+                {r === "Ghana" ? "Ghana (National)" : r}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="flex items-center gap-2">
+          <span className="text-slate-600">District</span>
+          <select
+            value={selectedDistrict}
+            onChange={(e) => setSelectedDistrict(e.target.value)}
+            disabled={selectedRegion === "Ghana"}
+            className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 disabled:cursor-not-allowed disabled:bg-slate-100"
+          >
+            <option value="">All (region total)</option>
+            {districtOptions.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {loading && (
+        <p className="text-xs text-slate-500">Loading…</p>
+      )}
+      {error && (
+        <p className="text-xs text-red-600">{error}</p>
+      )}
 
       {/* Donut chart */}
       <div className="flex justify-center">
