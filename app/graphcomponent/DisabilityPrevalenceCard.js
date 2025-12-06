@@ -277,7 +277,7 @@ export default function DisabilityPrevalenceCard({ filters }) {
 
   // prevalence (2 d.p.)
   const prevalenceText = currentStats
-    ? `${currentStats.prevalence.toFixed(2)}%`
+    ? `${Number(currentStats.prevalence ?? 0).toFixed(1)}%`
     : "–";
 
   // with / without difficulty percentages

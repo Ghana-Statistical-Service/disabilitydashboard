@@ -82,7 +82,7 @@ export default function EmploymentStatusCard() {
                 >
                   {/* percentage above bar */}
                   <span className="text-[11px] font-medium text-slate-500">
-                    {percent.toFixed(0)}%
+                    {Number(percent).toFixed(1)}%
                   </span>
 
                   <div

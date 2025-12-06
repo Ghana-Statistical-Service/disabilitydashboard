@@ -163,7 +163,7 @@ export default function SexDistributionCard({ filters }) {
 
           {/* center label – total share */}
           <div className="absolute inset-0 flex flex-col items-center justify-center text-xs font-semibold text-slate-900">
-            <span>{Math.round(malePercent + femalePercent)}%</span>
+            <span>{Number(malePercent + femalePercent).toFixed(1)}%</span>
             <span className="text-[10px] text-slate-500">of population</span>
           </div>
         </div>

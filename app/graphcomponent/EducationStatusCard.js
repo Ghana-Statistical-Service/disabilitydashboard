@@ -6,10 +6,12 @@ import regionsGeo from "../../data/Regions.gh.json";
 import districtsGeo from "../../data/District.gh.json";
 
 const FALLBACK_LEVELS = [
-  { label: "No schooling", value: 0 },
-  { label: "Primary", value: 0 },
-  { label: "JHS", value: 0 },
-  { label: "SHS+", value: 0 },
+  { label: "No Education", percent: 0 },
+  { label: "Primary", percent: 0 },
+  { label: "JHS", percent: 0 },
+  { label: "SHS / Secondary", percent: 0 },
+  { label: "Tertiary", percent: 0 },
+  { label: "Other", percent: 0 },
 ];
 
 export default function EducationStatusCard({ filters }) {
@@ -102,13 +104,17 @@ export default function EducationStatusCard({ filters }) {
             ? cleaned.reduce((sum, r) => sum + r.value, 0)
             : 1;
 
-        const percentLevels = cleaned.map((r) => ({
-          label: r.label,
-          percent:
+        const percentLevels = cleaned.map((r) => {
+          const percent =
             typeof r.percent === "number"
               ? r.percent
-              : (r.value / total) * 100,
-        }));
+              : (r.value / total) * 100;
+
+          return {
+            label: r.label,
+            percent: Number.isFinite(percent) ? percent : 0,
+          };
+        });
 
         setLevels(percentLevels);
         setLoading(false);
@@ -190,7 +196,7 @@ export default function EducationStatusCard({ filters }) {
             <div key={item.label}>
               <div className="mb-1 flex justify-between text-[11px] text-slate-600">
                 <span className="truncate pr-2">{item.label}</span>
-                <span>{pct.toFixed(0)}%</span>
+                <span>{Number(pct ?? 0).toFixed(1)}%</span>
               </div>
               <div className="h-3 w-full overflow-hidden rounded-full bg-slate-100">
                 <div

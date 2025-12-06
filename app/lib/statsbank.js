@@ -232,6 +232,43 @@ const ALL_EDU_VALUES = [
   "Other (specify)",
 ];
 
+const EDUCATION_BUCKETS = [
+  { label: "No Education", values: ["Never attended"] },
+  {
+    label: "Primary",
+    values: ["Nursery", "Kindergarten", "Primary"],
+  },
+  { label: "JHS", values: ["JSS/JHS", "Middle"] },
+  {
+    label: "SHS / Secondary",
+    values: [
+      "SSS/SHS",
+      "Secondary",
+      "Voc/technical/commercial",
+      "Post middle/secondary Certificate",
+      "Post middle/secondary Diploma",
+    ],
+  },
+  {
+    label: "Tertiary",
+    values: [
+      "Tertiary/HND",
+      "Tertiary - Bachelor's Degree",
+      "Tertiary - Post graduate Certificate/Diploma",
+      "Tertiary - Master's Degree",
+      "Tertiary - PhD",
+    ],
+  },
+  { label: "Other", values: ["Other (specify)"] },
+];
+
+const EDUCATION_BUCKET_MAP = EDUCATION_BUCKETS.reduce((map, bucket) => {
+  for (const raw of bucket.values) {
+    map.set(raw, bucket.label);
+  }
+  return map;
+}, new Map());
+
 /**
  * Generic PxWeb POST helper
  */
@@ -625,11 +662,13 @@ export async function getDisabilitySexDistributionNational() {
 /* 4. Education status (with difficulty)                               */
 /* ------------------------------------------------------------------ */
 /**
- * Returns 4 buckets matching your card:
- *  - No schooling  -> "Never attended"
- *  - Primary       -> "Primary"
- *  - JHS           -> "JSS/JHS"
- *  - SHS+          -> everything else above primary/JHS
+ * Returns 6 buckets matching your card:
+ *  - No schooling
+ *  - Primary
+ *  - JHS
+ *  - SHS / Secondary
+ *  - Tertiary
+ *  - Other
  */
 export async function getDisabilityEducationStatus(
   area = "Ghana",
@@ -686,34 +725,37 @@ export async function getDisabilityEducationStatus(
 
   const byEdu = new Map(rows.map((r) => [r.edu, r.value]));
 
-  const noSchooling = byEdu.get("Never attended") ?? 0;
-  const primary = byEdu.get("Primary") ?? 0;
-  const jhs = byEdu.get("JSS/JHS") ?? 0;
+  const bucketTotals = EDUCATION_BUCKETS.map((bucket) => ({
+    label: bucket.label,
+    value: 0,
+  }));
 
-  // SHS+ = sum of all remaining levels
-  let shsPlus = 0;
+  const otherIndex = EDUCATION_BUCKETS.findIndex(
+    (bucket) => bucket.label === "Other"
+  );
+
   for (const [edu, value] of byEdu.entries()) {
-    if (
-      edu !== "Never attended" &&
-      edu !== "Primary" &&
-      edu !== "JSS/JHS"
-    ) {
-      shsPlus += value;
+    const label =
+      EDUCATION_BUCKET_MAP.get(edu) ||
+      (otherIndex !== -1 ? EDUCATION_BUCKETS[otherIndex].label : null);
+    if (!label) continue;
+    const idx = bucketTotals.findIndex((b) => b.label === label);
+    if (idx !== -1) {
+      bucketTotals[idx].value += value;
     }
   }
 
-  const total = noSchooling + primary + jhs + shsPlus;
+  const total = bucketTotals.reduce((sum, bucket) => sum + bucket.value, 0);
 
   function pct(x) {
     return total ? (x / total) * 100 : 0;
   }
 
-  return [
-    { label: "No schooling", value: noSchooling, percent: pct(noSchooling) },
-    { label: "Primary", value: primary, percent: pct(primary) },
-    { label: "JHS", value: jhs, percent: pct(jhs) },
-    { label: "SHS+", value: shsPlus, percent: pct(shsPlus) },
-  ];
+  return bucketTotals.map((bucket) => ({
+    label: bucket.label,
+    value: bucket.value,
+    percent: pct(bucket.value),
+  }));
 }
 
 export async function getDisabilityEducationStatusNational() {

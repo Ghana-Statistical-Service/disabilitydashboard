@@ -11,19 +11,19 @@ export default function AccessServicesCard() {
         <div className="mt-4 space-y-3 text-xs text-slate-700">
           <div className="flex items-center justify-between">
             <span>Assistive Devices</span>
-            <span className="font-semibold">32%</span>
+            <span className="font-semibold">32.0%</span>
           </div>
           <div className="flex items-center justify-between">
             <span>Social Protection</span>
-            <span className="font-semibold">24%</span>
+            <span className="font-semibold">24.0%</span>
           </div>
           <div className="flex items-center justify-between">
             <span>Health Access</span>
-            <span className="font-semibold">61%</span>
+            <span className="font-semibold">61.0%</span>
           </div>
           <div className="flex items-center justify-between">
             <span>Inclusive Sanitation</span>
-            <span className="font-semibold">37%</span>
+            <span className="font-semibold">37.0%</span>
           </div>
         </div>
         <p className="mt-4 text-xs text-slate-500">
