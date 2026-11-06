@@ -115,15 +115,14 @@ export default function FiltersPanel({ filters, onApply }) {
           onChange={(v) => update("geographicLevel", v)}
         />
 
-        {/* Year (static) */}
+        {/* Census year — only 2021 PHC disability data is on StatsBank.
+            2010 PHC has no disability tables there yet (and used different,
+            non-comparable questions), so the year is shown as fixed. */}
         <div className="space-y-1.5">
-          <label htmlFor="filter-year" className={labelClass}>
-            Census year
-          </label>
-          <select id="filter-year" className={selectClass}>
-            <option className="text-slate-900">2021</option>
-            <option className="text-slate-900">2010</option>
-          </select>
+          <p className={labelClass}>Census year</p>
+          <p className="rounded-lg bg-white/5 px-3 py-2 text-sm text-white ring-1 ring-white/10">
+            2021
+          </p>
         </div>
 
         <Segmented
