@@ -5,7 +5,7 @@ import Footer from "./components/Footer";
 
 export default function Page() {
   return (
-    <div className="flex min-h-screen flex-col bg-[#f4f3fb]">
+    <div className="flex min-h-screen flex-col bg-[#f6f7f9]">
       <Header />
       <DashboardContent />
       <Footer />

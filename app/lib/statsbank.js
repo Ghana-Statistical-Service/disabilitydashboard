@@ -4,6 +4,7 @@ import districtGeo from "../../data/District.gh.json";
 
 const STATS_BASE =
   "https://statsbank.statsghana.gov.gh/api/v1/en/PHC%202021%20StatsBank/Difficulties%20in%20Performing%20Activities/";
+  
 
 const INDICATOR_ENDPOINTS = {
   disability: "disability_table.px",
@@ -320,6 +321,24 @@ export async function getDisabilityRegionSummary(
   sex = "all",
   ageGroup = "all"
 ) {
+  const { regions } = await getDisabilityRegionAndNationalSummary(
+    indicator,
+    sex,
+    ageGroup
+  );
+  return regions;
+}
+
+/**
+ * Same as getDisabilityRegionSummary, but also returns the national (Ghana)
+ * figure from the same StatsBank request.
+ * -> { regions: [...], national: { region: "Ghana", total, withDifficulty, ... } }
+ */
+export async function getDisabilityRegionAndNationalSummary(
+  indicator = "disability",
+  sex = "all",
+  ageGroup = "all"
+) {
   const meta = indicatorMeta(indicator);
   const body = {
     query: [
@@ -344,7 +363,7 @@ export async function getDisabilityRegionSummary(
       },
       {
         code: "Geographic_Area",
-        selection: { filter: "item", values: REGION_VALUES },
+        selection: { filter: "item", values: ["Ghana", ...REGION_VALUES] },
       },
       {
         code: "Sex",
@@ -387,7 +406,7 @@ export async function getDisabilityRegionSummary(
     grouped.set(r.region, current);
   }
 
-  return REGION_VALUES.map((name) => {
+  const summarise = (name) => {
     const g = grouped.get(name) || {
       region: name,
       total: 0,
@@ -402,7 +421,12 @@ export async function getDisabilityRegionSummary(
       withoutDifficulty,
       prevalence, // % of population with difficulty
     };
-  });
+  };
+
+  return {
+    regions: REGION_VALUES.map(summarise),
+    national: grouped.has("Ghana") ? summarise("Ghana") : null,
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -518,7 +542,10 @@ export async function getDisabilityAgeDistribution(
     query: [
       {
         code: meta.dimCode,
-        selection: { filter: "item", values: meta.withDifficultyValues },
+        selection: {
+          filter: "item",
+          values: [meta.totalValue, ...meta.withDifficultyValues],
+        },
       },
       {
         code: "Education",
@@ -555,18 +582,29 @@ export async function getDisabilityAgeDistribution(
   const dimIdx = colIndex(json, meta.dimCode);
 
   const sums = new Map();
+  const totals = new Map();
   for (const row of json.data) {
     const category = row.key[dimIdx];
-    if (!meta.withDifficultyValues.includes(category)) continue;
     const age = row.key[ageIdx];
     const val = Number(row.values[0]);
-    sums.set(age, (sums.get(age) ?? 0) + (Number.isNaN(val) ? 0 : val));
+    const safe = Number.isNaN(val) ? 0 : val;
+    if (category === meta.totalValue) {
+      totals.set(age, safe);
+    } else if (meta.withDifficultyValues.includes(category)) {
+      sums.set(age, (sums.get(age) ?? 0) + safe);
+    }
   }
 
-  return AGE_BANDS_FOR_CARD.map((age) => ({
-    age,
-    value: sums.get(age) ?? 0,
-  }));
+  return AGE_BANDS_FOR_CARD.map((age) => {
+    const value = sums.get(age) ?? 0;
+    const total = totals.get(age) ?? 0;
+    return {
+      age,
+      value, // persons with difficulty
+      total, // all persons in the age group
+      prevalence: total ? (value / total) * 100 : 0,
+    };
+  });
 }
 
 export async function getDisabilityAgeDistributionNational() {
@@ -599,7 +637,10 @@ export async function getDisabilitySexDistribution(
     query: [
       {
         code: meta.dimCode,
-        selection: { filter: "item", values: meta.withDifficultyValues },
+        selection: {
+          filter: "item",
+          values: [meta.totalValue, ...meta.withDifficultyValues],
+        },
       },
       {
         code: "Education",
@@ -632,17 +673,24 @@ export async function getDisabilitySexDistribution(
   const sexIdx = colIndex(json, "Sex");
   const dimIdx = colIndex(json, meta.dimCode);
 
-  const rows = json.data
-    .map((row) => ({
-      sex: row.key[sexIdx],
-      category: row.key[dimIdx],
-      value: Number(row.values[0]),
-    }))
-    .filter((r) => meta.withDifficultyValues.includes(r.category));
+  const withBySex = new Map();
+  const totalBySex = new Map();
+  for (const row of json.data) {
+    const sexKey = row.key[sexIdx];
+    const category = row.key[dimIdx];
+    const val = Number(row.values[0]);
+    const safe = Number.isNaN(val) ? 0 : val;
+    if (category === meta.totalValue) {
+      totalBySex.set(sexKey, safe);
+    } else if (meta.withDifficultyValues.includes(category)) {
+      withBySex.set(sexKey, (withBySex.get(sexKey) ?? 0) + safe);
+    }
+  }
 
-  const bySex = new Map(rows.map((r) => [r.sex, r.value]));
-  const male = bySex.get("Male") ?? 0;
-  const female = bySex.get("Female") ?? 0;
+  const male = withBySex.get("Male") ?? 0;
+  const female = withBySex.get("Female") ?? 0;
+  const maleTotal = totalBySex.get("Male") ?? 0;
+  const femaleTotal = totalBySex.get("Female") ?? 0;
   const total = male + female;
 
   return {
@@ -651,6 +699,11 @@ export async function getDisabilitySexDistribution(
     female,
     malePercent: total ? (male / total) * 100 : 0,
     femalePercent: total ? (female / total) * 100 : 0,
+    // prevalence within each sex (% of all males / females aged 5+)
+    maleTotal,
+    femaleTotal,
+    malePrevalence: maleTotal ? (male / maleTotal) * 100 : null,
+    femalePrevalence: femaleTotal ? (female / femaleTotal) * 100 : null,
   };
 }
 
@@ -760,4 +813,214 @@ export async function getDisabilityEducationStatus(
 
 export async function getDisabilityEducationStatusNational() {
   return getDisabilityEducationStatus("Ghana");
+}
+
+/* ------------------------------------------------------------------ */
+/* 5. Headline figures (national)                                      */
+/* ------------------------------------------------------------------ */
+/**
+ * One request returning national prevalence for the selected indicator,
+ * split by sex and by urban / rural locality.
+ */
+export async function getDisabilityHeadline(
+  indicator = "disability",
+  sex = "all",
+  ageGroup = "all"
+) {
+  const meta = indicatorMeta(indicator);
+  const SEXES = ["Both sexes", "Male", "Female"];
+  const LOCALITIES = ["All Locality Types", "Urban", "Rural"];
+
+  const body = {
+    query: [
+      {
+        code: meta.dimCode,
+        selection: {
+          filter: "item",
+          values: [meta.totalValue, ...meta.withDifficultyValues],
+        },
+      },
+      {
+        code: "Education",
+        selection: { filter: "item", values: ["Total"] },
+      },
+      {
+        code: "Locality",
+        selection: { filter: "item", values: LOCALITIES },
+      },
+      {
+        code: "Geographic_Area",
+        selection: { filter: "item", values: ["Ghana"] },
+      },
+      {
+        code: "Sex",
+        selection: { filter: "item", values: SEXES },
+      },
+      {
+        code: "Age",
+        selection: { filter: "item", values: ageSelection(ageGroup) },
+      },
+    ],
+    response: { format: "json" },
+  };
+
+  const json = await fetchWithIndicator(indicator, body);
+  const dimIdx = colIndex(json, meta.dimCode);
+  const sexIdx = colIndex(json, "Sex");
+  const locIdx = colIndex(json, "Locality");
+
+  const cells = new Map(); // "sex|locality" -> { total, withDifficulty }
+  for (const row of json.data) {
+    const key = `${row.key[sexIdx]}|${row.key[locIdx]}`;
+    const cell = cells.get(key) || { total: 0, withDifficulty: 0 };
+    const val = Number(row.values[0]);
+    const safe = Number.isNaN(val) ? 0 : val;
+    const category = row.key[dimIdx];
+    if (category === meta.totalValue) cell.total = safe;
+    else if (meta.withDifficultyValues.includes(category)) {
+      cell.withDifficulty += safe;
+    }
+    cells.set(key, cell);
+  }
+
+  const figure = (sexValue, locality) => {
+    const c = cells.get(`${sexValue}|${locality}`);
+    if (!c || !c.total) return null;
+    return {
+      total: c.total,
+      withDifficulty: c.withDifficulty,
+      prevalence: (c.withDifficulty / c.total) * 100,
+    };
+  };
+
+  const selectedSex = sexSelection(sex)[0];
+  return {
+    overall: figure(selectedSex, "All Locality Types"),
+    male: figure("Male", "All Locality Types"),
+    female: figure("Female", "All Locality Types"),
+    urban: figure(selectedSex, "Urban"),
+    rural: figure(selectedSex, "Rural"),
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* 6. Comparison of the six WGSS domains                               */
+/* ------------------------------------------------------------------ */
+
+const DOMAIN_TABLES = [
+  {
+    key: "seeing",
+    label: "Seeing",
+    dimCode: "Seeing",
+    cannot: "Cannot see at all",
+  },
+  {
+    key: "hearing",
+    label: "Hearing",
+    dimCode: "Hearing",
+    cannot: "Cannot hear at all",
+  },
+  {
+    key: "physical",
+    label: "Walking",
+    dimCode: "Physical",
+    cannot: "Cannot do at all",
+  },
+  {
+    key: "intellectual",
+    label: "Remembering or concentrating",
+    dimCode: "Intellectual",
+    cannot: "Cannot remember or concentrate at all",
+  },
+  {
+    key: "selfcare",
+    label: "Self-care",
+    dimCode: "Selfcare",
+    cannot: "Cannot do at all",
+  },
+  {
+    key: "speech",
+    label: "Communicating",
+    dimCode: "Speech",
+    cannot: "Cannot communicate at all",
+  },
+];
+
+/**
+ * For each domain returns the share of persons aged 5+ reporting
+ * some difficulty, a lot of difficulty, and cannot do at all.
+ * `disability` = a lot + cannot (the WGSS disability cut-off).
+ */
+export async function getDisabilityDomainComparison(
+  area = "Ghana",
+  sex = "all",
+  ageGroup = "all"
+) {
+  if (!GEO_AREA_VALUES.has(area)) {
+    throw new Error(`Unsupported geographic area: ${area}`);
+  }
+
+  const SOME = "Yes, some difficulty";
+  const A_LOT = "Yes, a lot of difficulty";
+
+  return Promise.all(
+    DOMAIN_TABLES.map(async (d) => {
+      const body = {
+        query: [
+          {
+            code: d.dimCode,
+            selection: {
+              filter: "item",
+              values: ["Total", SOME, A_LOT, d.cannot],
+            },
+          },
+          {
+            code: "Education",
+            selection: { filter: "item", values: ["Total"] },
+          },
+          {
+            code: "Locality",
+            selection: { filter: "item", values: ["All Locality Types"] },
+          },
+          {
+            code: "Geographic_Area",
+            selection: { filter: "item", values: [area] },
+          },
+          {
+            code: "Sex",
+            selection: { filter: "item", values: sexSelection(sex) },
+          },
+          {
+            code: "Age",
+            selection: { filter: "item", values: ageSelection(ageGroup) },
+          },
+        ],
+        response: { format: "json" },
+      };
+
+      const json = await queryPxWeb(endpointForIndicator(d.key), body);
+      const dimIdx = colIndex(json, d.dimCode);
+      const byCat = new Map(
+        json.data.map((row) => [row.key[dimIdx], Number(row.values[0]) || 0])
+      );
+
+      const total = byCat.get("Total") ?? 0;
+      const pct = (v) => (total ? (v / total) * 100 : 0);
+      const some = byCat.get(SOME) ?? 0;
+      const aLot = byCat.get(A_LOT) ?? 0;
+      const cannot = byCat.get(d.cannot) ?? 0;
+
+      return {
+        key: d.key,
+        domain: d.label,
+        total,
+        counts: { some, aLot, cannot },
+        somePct: pct(some),
+        aLotPct: pct(aLot),
+        cannotPct: pct(cannot),
+        disabilityPct: pct(aLot + cannot),
+        anyDifficultyPct: pct(some + aLot + cannot),
+      };
+    })
+  );
 }

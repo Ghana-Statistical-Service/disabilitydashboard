@@ -1,6 +1,6 @@
 // app/api/disability/region/route.js
 import { NextResponse } from "next/server";
-import { getDisabilityRegionSummary } from "@/app/lib/statsbank";
+import { getDisabilityRegionAndNationalSummary } from "@/app/lib/statsbank";
 
 export async function GET(request) {
   try {
@@ -8,8 +8,9 @@ export async function GET(request) {
     const indicator = searchParams.get("indicator") || "disability";
     const sex = searchParams.get("sex") || "all";
     const ageGroup = searchParams.get("ageGroup") || "all";
-    const data = await getDisabilityRegionSummary(indicator, sex, ageGroup);
-    return NextResponse.json({ data });
+    const { regions, national } =
+      await getDisabilityRegionAndNationalSummary(indicator, sex, ageGroup);
+    return NextResponse.json({ data: regions, national });
   } catch (err) {
     console.error("Error fetching disability regions:", err);
     return new NextResponse(

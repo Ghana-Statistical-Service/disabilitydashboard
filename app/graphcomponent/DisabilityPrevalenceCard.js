@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import "leaflet/dist/leaflet.css";
 import regionsGeo from "../../data/Regions.gh.json";
 import districtsGeo from "../../data/District.gh.json";
+import { indicatorLabel, DATA_SOURCE } from "../lib/indicators";
 
 const HIGHEST_FALLBACK = ["No data"];
 const MAP_LEVELS = {
@@ -39,6 +40,8 @@ export default function DisabilityPrevalenceCard({ filters }) {
 
   // stats from backend: { [areaName]: { total, withDifficulty, withoutDifficulty, prevalence } }
   const [areaStats, setAreaStats] = useState(null);
+  // national (Ghana) figure, returned by the region endpoint
+  const [nationalStats, setNationalStats] = useState(null);
   const [highestAreas, setHighestAreas] = useState(HIGHEST_FALLBACK);
   const [mapLevel, setMapLevel] = useState("region");
   const [defaultArea, setDefaultArea] = useState(
@@ -132,6 +135,7 @@ export default function DisabilityPrevalenceCard({ filters }) {
           setDefaultArea(levelConfig.defaultName);
         }
         setAreaStats(statsMap);
+        setNationalStats(json?.national ?? null);
       })
       .catch((err) => {
         console.error("Error fetching disability stats:", err);
@@ -199,7 +203,7 @@ export default function DisabilityPrevalenceCard({ filters }) {
 
     const geoLayer = L.geoJSON(levelConfig.geo, {
       style: () => ({
-        color: "#f4f3fb",
+        color: "#ffffff",
         weight: 1,
         fillColor: baseColor,
         fillOpacity: 1,
@@ -210,12 +214,12 @@ export default function DisabilityPrevalenceCard({ filters }) {
 
         layer.on({
           mouseover() {
-            layer.setStyle({ fillColor: "#6c4eff" });
+            layer.setStyle({ weight: 2.5, color: "#0f172a" });
+            layer.bringToFront();
             setHoveredArea(name);
           },
           mouseout() {
-            const base = layer.options._baseFillColor || baseColor;
-            layer.setStyle({ fillColor: base });
+            layer.setStyle({ weight: 1, color: "#ffffff" });
             setHoveredArea(null);
           },
         });
@@ -245,7 +249,7 @@ export default function DisabilityPrevalenceCard({ filters }) {
     const max = Math.max(...values);
 
     const start = { r: 185, g: 166, b: 255 }; // #b9a6ff
-    const end = { r: 108, g: 78, b: 255 }; // #6c4eff
+    const end = { r: 59, g: 42, b: 143 }; // #3b2a8f
 
     const getColor = (p) => {
       if (Number.isNaN(p) || max <= min) return "#b9a6ff";
@@ -271,9 +275,16 @@ export default function DisabilityPrevalenceCard({ filters }) {
   }, [areaStats, levelConfig]);
 
   // Which area’s stats should we show on the right?
-  const areaForStats =
-    hoveredArea || defaultArea || highestAreas?.[0] || HIGHEST_FALLBACK[0];
-  const currentStats = (areaStats && areaStats[areaForStats]) || null;
+  // On the National view, default to the Ghana figure; hovering a region
+  // still shows that region's figure.
+  const showNational =
+    !hoveredArea && geographicLevel === "national" && Boolean(nationalStats);
+  const areaForStats = showNational
+    ? "Ghana (National)"
+    : hoveredArea || defaultArea || highestAreas?.[0] || HIGHEST_FALLBACK[0];
+  const currentStats = showNational
+    ? nationalStats
+    : areaStats?.[areaForStats] || null;
 
   // prevalence (2 d.p.)
   const prevalenceText = currentStats
@@ -305,101 +316,120 @@ export default function DisabilityPrevalenceCard({ filters }) {
   }));
 
   return (
-    <section className="rounded-3xl bg-white p-5 shadow-md">
-      {/* Title + toggle */}
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold text-slate-900">
-          Disability Prevalence Map
-        </h2>
-        <div className="flex items-center gap-2 text-xs">
-          <span className="rounded-lg border border-slate-200 px-3 py-1 text-slate-700 bg-white">
-            Indicator: {indicator}
-          </span>
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-700">
-            {mapLevel === "district" ? "Districts" : "Regions"}
-          </span>
+    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      {/* Title + context */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold text-slate-900">
+            Disability Prevalence by{" "}
+            {mapLevel === "district" ? "District" : "Region"}
+          </h2>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Share of persons aged 5+ with the selected difficulty. Hover over
+            an area to see its figures.
+          </p>
         </div>
+        <span className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700">
+          {indicatorLabel(indicator)}
+        </span>
       </div>
 
       {/* Map + details grid */}
-      <div className="mt-4 grid gap-4 lg:grid-cols-3">
+      <div className="mt-5 grid gap-5 lg:grid-cols-3">
         {/* LEFT: Map (2/3) */}
-        <div className="lg:col-span-2 flex flex-col gap-3">
-          <div className="relative flex flex-1 items-center justify-center rounded-2xl bg-[#efeaff] p-4">
+        <div className="flex flex-col gap-3 lg:col-span-2">
+          <div className="relative flex flex-1 items-center justify-center rounded-xl border border-slate-100 bg-slate-50 p-4">
             {/* Leaflet map container */}
             <div
               ref={mapContainerRef}
-              className="h-80 w-full max-w-xs overflow-hidden rounded-[2.2rem]"
+              role="img"
+              aria-label={`Choropleth map of ${indicatorLabel(
+                indicator
+              ).toLowerCase()} prevalence by ${
+                mapLevel === "district" ? "district" : "region"
+              }`}
+              className="h-80 w-full max-w-xs overflow-hidden bg-transparent"
+              style={{ background: "transparent" }}
             />
           </div>
 
           {/* Low–High legend bar */}
-          <div className="flex items-center justify-between text-[11px] text-slate-600">
-            <span>Low</span>
-            <div className="mx-3 h-2 flex-1 max-w-xs rounded-full bg-gradient-to-r from-[#daccff] to-[#6c4eff]" />
-            <span>High</span>
+          <div className="flex items-center gap-3 text-[11px] text-slate-500">
+            <span className="font-medium text-slate-600">Prevalence</span>
+            <span>Lower</span>
+            <div className="h-2 max-w-xs flex-1 rounded-sm bg-gradient-to-r from-[#b9a6ff] to-[#3b2a8f]" />
+            <span>Higher</span>
           </div>
         </div>
 
         {/* RIGHT: dynamic details (1/3) */}
-        <div className="lg:col-span-1 flex flex-col gap-3">
-          <div className="rounded-2xl bg-[#f8f6ff] p-4 shadow-sm">
-            <p className="text-xs font-semibold uppercase tracking-wide text-violet-700">
+        <div className="flex flex-col gap-3 lg:col-span-1">
+          <div className="rounded-xl border-l-4 border-[#352676] bg-[#f5f3fc] p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-[#5b47b8]">
               {areaForStats}
             </p>
-            <p className="mt-1 text-2xl font-bold text-slate-900">
+            <p className="mt-1 text-3xl font-semibold tracking-tight text-slate-900">
               {prevalenceText}
             </p>
-            <p className="mt-1 text-xs text-slate-600">
-              Prevalence of disability
+            <p className="mt-0.5 text-xs text-slate-600">
+              Prevalence ({indicatorLabel(indicator).toLowerCase()})
             </p>
-            <p className="mt-2 text-xs text-slate-500">
-              Approx.{" "}
-              <span className="font-semibold">{withCount}</span>{" "}
-              people with at least one difficulty.
+            <p className="mt-3 border-t border-[#e2ddf5] pt-2 text-xs text-slate-600">
+              <span className="font-semibold text-slate-900">{withCount}</span>{" "}
+              persons with difficulty
             </p>
           </div>
 
           {/* With / Without difficulty cards */}
           <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-2xl bg-white p-3 shadow-sm">
+            <div className="rounded-xl border border-slate-200 p-3">
               <p className="text-[11px] uppercase tracking-wide text-slate-500">
                 With difficulty
               </p>
-              <p className="mt-1 text-xl font-semibold text-slate-900">
+              <p className="mt-1 text-lg font-semibold text-slate-900">
                 {withPctText}
               </p>
             </div>
-            <div className="rounded-2xl bg-white p-3 shadow-sm">
+            <div className="rounded-xl border border-slate-200 p-3">
               <p className="text-[11px] uppercase tracking-wide text-slate-500">
                 Without difficulty
               </p>
-              <p className="mt-1 text-xl font-semibold text-slate-900">
+              <p className="mt-1 text-lg font-semibold text-slate-900">
                 {withoutPctText}
               </p>
             </div>
           </div>
 
           {/* Highest prevalence list */}
-          <div className="rounded-2xl bg-white p-3 text-xs shadow-sm">
+          <div className="rounded-xl border border-slate-200 p-3 text-xs">
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-              Highest
+              Highest prevalence
             </p>
-            <div className="flex flex-col gap-2">
-              {highestItems.map(({ key, name, prevalence }) => (
-                <div key={key} className="flex items-center justify-between">
-                  <span>{name}</span>
-                  <span className="text-slate-500">
+            <ol className="flex flex-col divide-y divide-slate-100">
+              {highestItems.map(({ key, name, prevalence }, idx) => (
+                <li
+                  key={key}
+                  className="flex items-center justify-between gap-2 py-1.5"
+                >
+                  <span className="flex items-center gap-2 text-slate-700">
+                    <span className="w-3 text-slate-400">{idx + 1}</span>
+                    {name}
+                  </span>
+                  <span className="font-medium text-slate-900">
                     {Number.isFinite(prevalence)
                       ? `${prevalence.toFixed(1)}%`
                       : "–"}
                   </span>
-                </div>
+                </li>
               ))}
-            </div>
+            </ol>
           </div>
         </div>
       </div>
+
+      <p className="mt-4 text-[11px] text-slate-400">
+        Source: {DATA_SOURCE}.
+      </p>
     </section>
   );
 }

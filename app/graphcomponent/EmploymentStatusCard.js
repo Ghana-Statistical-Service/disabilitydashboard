@@ -2,14 +2,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import SampleBadge from "./SampleBadge";
 
 const FALLBACK_DATA = [
-  { label: "Employed", value: 54 },
+  { label: "Employed", value: 54, highlight: true },
   { label: "Unemployed", value: 46 },
 ];
 
 export default function EmploymentStatusCard() {
   const [employmentData, setEmploymentData] = useState(FALLBACK_DATA);
+  const [isSample, setIsSample] = useState(true);
 
   useEffect(() => {
     fetch("/api/statsbank/disability/employment")
@@ -21,6 +23,7 @@ export default function EmploymentStatusCard() {
         // Expect: { data: [{label, value}, ...] }
         const rows = Array.isArray(json?.data) ? json.data : [];
         if (rows.length) {
+          setIsSample(false);
           setEmploymentData(
             rows
               .filter(
@@ -55,13 +58,16 @@ export default function EmploymentStatusCard() {
       : 1;
 
   return (
-    <div className="rounded-3xl bg-white p-5 shadow-md">
-      <h3 className="text-base font-semibold text-slate-900">
-        Employment Status (15+ years)
-      </h3>
+    <div className="flex flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-start justify-between gap-2">
+        <h3 className="text-sm font-semibold text-slate-900">
+          Employment Status (15+ years)
+        </h3>
+        {isSample && <SampleBadge />}
+      </div>
 
       {/* Inner chart card */}
-      <div className="mt-4 rounded-3xl bg-[#f8f6ff] px-6 pt-6 pb-5">
+      <div className="mt-4 rounded-xl bg-slate-50 px-6 pb-5 pt-6">
         <div className="relative h-44 w-full">
           {/* horizontal reference lines */}
           <div className="pointer-events-none absolute inset-x-2 top-10 h-px bg-slate-200/60" />
@@ -81,13 +87,13 @@ export default function EmploymentStatusCard() {
                   className="flex flex-1 flex-col items-center gap-1"
                 >
                   {/* percentage above bar */}
-                  <span className="text-[11px] font-medium text-slate-500">
+                  <span className="text-xs font-semibold text-slate-900">
                     {Number(percent).toFixed(1)}%
                   </span>
 
                   <div
-                    className={`w-4 sm:w-5 md:w-6 bg-gradient-to-t from-[#b8a4ff] to-[#4c3acb] rounded-t-2xl rounded-b-none ${
-                      item.highlight ? "shadow-md" : ""
+                    className={`w-8 rounded-t-md ${
+                      item.highlight ? "bg-[#4c3acb]" : "bg-[#b9a6ff]"
                     }`}
                     style={{ height: `${height}px` }}
                   />
@@ -102,13 +108,10 @@ export default function EmploymentStatusCard() {
         </div>
       </div>
 
-      <p className="mt-4 text-xs text-slate-500">
-        Employment among persons with disability remains below the general
-        population.
+      <p className="mt-auto pt-4 text-[11px] text-slate-400">
+        Economic activity status of persons with disability aged 15 and
+        older.
       </p>
-
-      {/* Employed caption in green */}
-      <p className="mt-1 text-xs font-semibold text-emerald-700">Employed</p>
     </div>
   );
 }

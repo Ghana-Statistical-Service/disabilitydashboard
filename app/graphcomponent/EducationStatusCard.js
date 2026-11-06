@@ -1,9 +1,9 @@
 // app/components/graphcomponent/EducationStatusCard.js
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import regionsGeo from "../../data/Regions.gh.json";
-import districtsGeo from "../../data/District.gh.json";
+import { useAreaSelection } from "../lib/useAreaSelection";
+import { useStatsbankData } from "../lib/useStatsbankData";
+import { DATA_SOURCE } from "../lib/indicators";
 
 const FALLBACK_LEVELS = [
   { label: "No Education", percent: 0 },
@@ -14,129 +14,53 @@ const FALLBACK_LEVELS = [
   { label: "Other", percent: 0 },
 ];
 
+// Expect rows: [{label, value, percent?}, ...] -> [{label, percent}, ...]
+function toPercentLevels(rows) {
+  const cleaned = (Array.isArray(rows) ? rows : []).filter(
+    (r) =>
+      typeof r.label === "string" &&
+      typeof r.value === "number" &&
+      !Number.isNaN(r.value)
+  );
+  if (!cleaned.length) return FALLBACK_LEVELS;
+
+  const total = cleaned.reduce((sum, r) => sum + r.value, 0) || 1;
+  return cleaned.map((r) => {
+    const percent =
+      typeof r.percent === "number" ? r.percent : (r.value / total) * 100;
+    return { label: r.label, percent: Number.isFinite(percent) ? percent : 0 };
+  });
+}
+
 export default function EducationStatusCard({ filters }) {
-  const [levels, setLevels] = useState(FALLBACK_LEVELS);
-  const [selectedRegion, setSelectedRegion] = useState("Ghana");
-  const [selectedDistrict, setSelectedDistrict] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const indicator = filters?.indicator || "disability";
   const sex = filters?.sex || "all";
   const ageGroupFilter = filters?.ageGroup || "all";
-  const geographicLevel = filters?.geographicLevel || "national";
 
-  const regionOptions = useMemo(
-    () =>
-      ["Ghana", ...new Set(regionsGeo.features.map((f) => f.properties.region))],
-    []
+  const {
+    regionOptions,
+    districtOptions,
+    selectedRegion,
+    selectedDistrict,
+    area,
+    selectRegion,
+    selectDistrict,
+  } = useAreaSelection(filters?.geographicLevel || "national");
+
+  const { data, loading, error } = useStatsbankData(
+    "/api/statsbank/disability/education",
+    { area, indicator, sex, ageGroup: ageGroupFilter }
   );
-
-  const districtOptions = useMemo(() => {
-    if (selectedRegion === "Ghana") return [];
-    return districtsGeo.features
-      .filter(
-        (f) =>
-          f.properties.region === selectedRegion ||
-          f.properties.Region === selectedRegion
-      )
-      .map((f) => f.properties.district || f.properties.label || f.properties.name);
-  }, [selectedRegion]);
-
-  useEffect(() => {
-    if (geographicLevel === "national") {
-      setSelectedRegion("Ghana");
-      setSelectedDistrict("");
-    } else if (geographicLevel === "region") {
-      const firstRegion = regionOptions.find((r) => r !== "Ghana") || "Ghana";
-      setSelectedRegion(firstRegion);
-      setSelectedDistrict("");
-    } else if (geographicLevel === "district") {
-      const firstDistrict = districtsGeo.features[0];
-      const regionName =
-        firstDistrict?.properties?.region ||
-        firstDistrict?.properties?.Region ||
-        "Ghana";
-      const districtName =
-        firstDistrict?.properties?.district ||
-        firstDistrict?.properties?.label ||
-        "";
-      setSelectedRegion(regionName);
-      setSelectedDistrict(districtName);
-    }
-  }, [geographicLevel, regionOptions]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    const area = selectedDistrict || selectedRegion || "Ghana";
-
-    setLoading(true);
-    setError(null);
-
-    const url = new URL(
-      `/api/statsbank/disability/education?area=${encodeURIComponent(area)}`,
-      window.location.origin
-    );
-    url.searchParams.set("indicator", indicator);
-    url.searchParams.set("sex", sex);
-    url.searchParams.set("ageGroup", ageGroupFilter);
-
-    fetch(url.toString(), {
-      signal: controller.signal,
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error("Failed to fetch education status");
-        return res.json();
-      })
-      .then((json) => {
-        const rows = Array.isArray(json?.data) ? json.data : [];
-        if (!rows.length) return;
-
-        // Expect rows: [{label, value, percent?}, ...]
-        const cleaned = rows.filter(
-          (r) =>
-            typeof r.label === "string" &&
-            typeof r.value === "number" &&
-            !Number.isNaN(r.value)
-        );
-
-        const total =
-          cleaned.length > 0
-            ? cleaned.reduce((sum, r) => sum + r.value, 0)
-            : 1;
-
-        const percentLevels = cleaned.map((r) => {
-          const percent =
-            typeof r.percent === "number"
-              ? r.percent
-              : (r.value / total) * 100;
-
-          return {
-            label: r.label,
-            percent: Number.isFinite(percent) ? percent : 0,
-          };
-        });
-
-        setLevels(percentLevels);
-        setLoading(false);
-      })
-      .catch((err) => {
-        if (err.name === "AbortError") return;
-        console.error("Education status fetch error:", err);
-        setError("Unable to load data");
-        setLoading(false);
-      });
-
-    return () => controller.abort();
-  }, [selectedRegion, selectedDistrict, indicator, sex, ageGroupFilter]);
+  const levels = toPercentLevels(data);
 
   // Used to scale bar widths but keep some minimum visual width
   const maxPercent =
     levels.length > 0 ? Math.max(...levels.map((l) => l.percent ?? l.value)) : 1;
 
   return (
-    <div className="rounded-3xl bg-white p-5 shadow-md">
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="mb-4 flex items-center justify-between gap-3">
-      <h3 className="text-base font-semibold text-slate-900">
+      <h3 className="text-sm font-semibold text-slate-900">
         Education Status (5+ years) of Persons with Disability
       </h3>
     </div>
@@ -146,11 +70,8 @@ export default function EducationStatusCard({ filters }) {
         <span className="text-slate-600">Region</span>
           <select
             value={selectedRegion}
-            onChange={(e) => {
-              setSelectedRegion(e.target.value);
-              setSelectedDistrict("");
-            }}
-            className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800"
+            onChange={(e) => selectRegion(e.target.value)}
+            className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-800"
           >
             {regionOptions.map((r) => (
               <option key={r} value={r}>
@@ -164,9 +85,9 @@ export default function EducationStatusCard({ filters }) {
           <span className="text-slate-600">District</span>
           <select
             value={selectedDistrict}
-            onChange={(e) => setSelectedDistrict(e.target.value)}
+            onChange={(e) => selectDistrict(e.target.value)}
             disabled={selectedRegion === "Ghana"}
-            className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 disabled:cursor-not-allowed disabled:bg-slate-100"
+            className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-800 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
           >
             <option value="">All (region total)</option>
             {districtOptions.map((d) => (
@@ -179,7 +100,7 @@ export default function EducationStatusCard({ filters }) {
       </div>
 
       {loading && (
-        <p className="text-xs text-slate-500">Loading…</p>
+        <p className="text-xs text-slate-500" role="status">Loading…</p>
       )}
       {error && (
         <p className="text-xs text-red-600">{error}</p>
@@ -196,11 +117,13 @@ export default function EducationStatusCard({ filters }) {
             <div key={item.label}>
               <div className="mb-1 flex justify-between text-[11px] text-slate-600">
                 <span className="truncate pr-2">{item.label}</span>
-                <span>{Number(pct ?? 0).toFixed(1)}%</span>
+                <span className="font-medium text-slate-900">
+                  {Number(pct ?? 0).toFixed(1)}%
+                </span>
               </div>
-              <div className="h-3 w-full overflow-hidden rounded-full bg-slate-100">
+              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
                 <div
-                  className="h-full rounded-full bg-gradient-to-r from-[#6b4bff] to-[#c9b5ff]"
+                  className="h-full rounded-full bg-[#4c3acb]"
                   style={{ width: `${widthPct}%` }}
                 />
               </div>
@@ -209,9 +132,9 @@ export default function EducationStatusCard({ filters }) {
         })}
       </div>
 
-      <p className="mt-4 text-xs text-slate-500">
-        Higher education levels can inform inclusive schooling policies and
-        investments.
+      <p className="mt-4 text-[11px] text-slate-400">
+        Education level of persons with disability aged 5+. Source:{" "}
+        {DATA_SOURCE}.
       </p>
     </div>
   );
